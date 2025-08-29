@@ -1,0 +1,72 @@
+---
+title: "PPG Paint Colors: Final Project"
+subtitle: "Regression and Classification Performance Analysis with Hold-Out Prediction"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(dplyr)
+library(tibble)
+```
+
+## Load Data
+```{r, read_data_01}
+df <- readr::read_csv("paint_project_train_data.csv", col_names = TRUE)
+```
+
+## Load Hold-Out Data and Models
+```{r}
+# replace these paths with wherever you saved your models
+reg_model <- readRDS("best_regression_model.rds")
+cls_model <- readRDS("best_classification_model.rds")
+
+holdout <- readr::read_csv("paint_project_holdout_data.csv")
+
+```
+## Predict on Hold-Out Set
+```{r}
+# 1) REGRESSION: Predict logit-transformed response
+y_hat <- predict(reg_model, holdout)
+reg_preds <- tibble(y = y_hat)
+
+# 2) CLASSIFICATION: Predict probability of event
+cls_probs <- predict(cls_model, holdout, type = "response")
+cls_probs <- tibble(probability = cls_probs)
+
+# 3) CLASSIFICATION: Predict outcome class label
+cls_class <- ifelse(cls_probs$probability >= 0.5, "event", "non_event")
+cls_class <- tibble(outcome = cls_class)
+
+
+
+```
+
+## Compile & Export Submission
+```{r}
+submission <- tibble(
+  y           = reg_preds$y,
+  outcome     = cls_class$outcome,
+  probability = cls_probs$probability
+) %>%
+  rowid_to_column(var = "id")
+
+readr::write_csv(submission, "holdout_predictions.csv")
+
+```
+
+
+
+## Interpretation
+*The final models for the PPG Paint Colors project demonstrated excellent performance, with model selection carefully balancing predictive accuracy and generalization. While the Neural Network (for regression) and Random Forest (for classification) achieved the highest scores during cross-validation—showing the lowest RMSE and highest R² for regression, and the best accuracy and AUC for classification—they also exhibited signs of overfitting on the hold-out test set.*
+
+*To ensure more stable performance on unseen data, I ultimately selected lm7 and glm7 as the final models for regression and classification, respectively. The lm7 model achieved a Root Mean Squared Error (RMSE) of 0.0589 and an R² of 0.9976, suggesting a very close fit to the data with minimal error. The Mean Absolute Error (MAE) of 0.0418 supports this precision, indicating that predictions, on average, deviate only slightly from actual values.*
+
+*For classification, glm7 yielded an overall accuracy of 82.8%, correctly identifying outcomes in over four out of five cases. Its specificity of 87.4% demonstrates strong performance in detecting “non-event” cases, while a sensitivity of 64.1% indicates moderate effectiveness at identifying positive events. Despite this trade-off, the ROC AUC of 0.8468 suggests strong overall discriminatory power.*
+
+*Although the Neural Network and Random Forest models ranked highest under cross-validation, the potential for overfitting led me to prioritize models with more robust out-of-sample performance. I therefore used lm7 and glm7 to generate the final hold-out predictions, as they offer a more reliable and interpretable solution with better generalization to new data.*
+

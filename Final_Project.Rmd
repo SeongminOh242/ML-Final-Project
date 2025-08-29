@@ -1,0 +1,1435 @@
+---
+title: "Final__Project"
+output: html_document
+date: "2025-03-31"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, load_libraries}
+.libPaths("~/Rlibs")
+library(dplyr)
+library(tidyverse)
+library(GGally)
+library(boot)
+library(bayesplot)
+library(posterior)
+library(ggplot2)
+library(rstanarm)
+```
+
+```{r, read_final_data}
+paint_data <- read_csv("paint_project_train_data.csv", col_names = TRUE)
+
+head(paint_data)
+summary(paint_data)
+```
+
+```{r, visualize_continuous, fig.width=10}
+paint_data %>%
+  pivot_longer(cols = c(R,G,B,Hue,response), names_to = "Var", values_to = "Values") %>%
+  ggplot(aes(x = Values)) +
+  geom_density(fill = "skyblue") +
+  facet_wrap(~ Var, scales = "free") + 
+  labs(title = "Density plots") +
+  theme_minimal()
+```
+*Are the distributions Gaussian-like?*
+*Density plots clearly shows that most variables (R, G, B, Hue, response) do not follow a Gaussian distribution.*
+
+
+```{r, categorical_counts}
+paint_data %>%
+  pivot_longer(cols = c(Saturation, Lightness), names_to = "Var", values_to = "Values") %>%
+  count(Var, Values)
+```
+
+```{r, conditional_summaries}
+paint_data %>%
+  group_by(Saturation) %>%
+  summarize(across(c(R, G, B, Hue, response), list(mean = mean, sd = sd), .names = "{.col}_{.fn}"))
+
+paint_data %>%
+  group_by(Lightness) %>%
+  summarize(across(c(R, G, B, Hue, response), list(mean = mean, sd = sd), .names = "{.col}_{.fn}"))
+
+paint_data %>%
+  group_by(outcome) %>%
+  summarize(across(c(R, G, B, Hue, response), list(mean = mean, sd = sd), .names = "{.col}_{.fn}"))
+```
+
+```{r}
+# Boxplot + Jitter by Saturation
+paint_data %>%
+  pivot_longer(cols = c(R, G, B, Hue, response), names_to = "Variable", values_to = "Value") %>%
+  ggplot(aes(x = as.factor(Saturation), y = Value, fill = as.factor(Saturation))) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.4) +
+  facet_wrap(~ Variable, scales = "free") +
+  labs(title = "Figure Saturation", x = "Saturation", y = "Value") +
+  theme_minimal()
+
+# Boxplot + Jitter by Lightness
+paint_data %>%
+  pivot_longer(cols = c(R, G, B, Hue, response), names_to = "Variable", values_to = "Value") %>%
+  ggplot(aes(x = as.factor(Lightness), y = Value, fill = as.factor(Lightness))) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.4) +
+  facet_wrap(~ Variable, scales = "free") +
+  labs(title = "Figure Lightness", x = "Lightness", y = "Value") +
+  theme_minimal()
+
+# Boxplot + Jitter by Outcome
+paint_data %>%
+  pivot_longer(cols = c(R, G, B, Hue, response), names_to = "Variable", values_to = "Value") %>%
+  ggplot(aes(x = as.factor(outcome), y = Value, fill = as.factor(outcome))) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  geom_jitter(width = 0.15, size = 0.5, alpha = 0.4) +
+  facet_wrap(~ Variable, scales = "free") +
+  labs(title = "Figure Outcome", x = "Outcome", y = "Value") +
+  theme_minimal()
+
+```
+*Are there differences in continuous variable distributions based on the categorical variables?*
+*Yes, the distributions of continuous variables differ across saturation and lightness levels. For instance, midtone and pale lightness levels show higher response values, and RGB values vary substantially across both categorical features.*
+
+*Are there differences in continuous variable distributions and summary statistics based on the binary outcome?*
+*Differences between outcome groups are modest but noticeable in the distributions of RGB values and response, with outcome = 1 generally showing slightly higher values. However, the separation is not dramatic, indicating moderate predictive potential.*
+
+```{r, correlation_plot}
+paint_data %>%
+  dplyr::select(R, G, B, Hue) %>%
+  ggpairs() +
+  labs(title = "Correlation Plot")
+
+```
+*Are continuous inputs correlated?*
+*The correlation plot shows strong positive relationships among the RGB channels, especially between Green and Blue (r = 0.813) and Red and Green (r = 0.754), indicating high collinearity. In contrast, Hue is only weakly correlated with the RGB values, contributing more independent information. These patterns support the use of interaction terms or nonlinear modeling, as done in lm7 and glm7, to better capture complex color relationships.*
+
+
+```{r, logit_response}
+paint_data <- paint_data %>%
+  mutate(y = boot::logit(response / 100))
+```
+
+```{r, response_plots_by_categorical}
+paint_data %>%
+  pivot_longer(cols = c(R, G, B, Hue), names_to = "Var", values_to = "Values") %>%
+  ggplot(aes(x = Values, y = response, color = as.factor(Saturation))) +  
+  geom_point() + 
+  geom_smooth(method = "loess", se = FALSE) +
+  facet_wrap(~ Var, scales = "free") +
+  labs(title = "Saturation") +
+  theme_minimal()
+
+paint_data %>%
+  pivot_longer(cols = c(R, G, B, Hue), names_to = "Var", values_to = "Values") %>%
+  ggplot(aes(x = Values, y = response, color = as.factor(Lightness))) +  
+  geom_point() + 
+  geom_smooth(method = "loess", se = FALSE) +
+  facet_wrap(~ Var, scales = "free") +
+  labs(title = "Lightness") +
+  theme_minimal()
+```
+
+```{r, logit_plots_by_categorical}
+paint_data %>%
+  pivot_longer(cols = c(R, G, B, Hue), names_to = "Var", values_to = "Values") %>%
+  ggplot(aes(x = Values, y = y, color = as.factor(Saturation))) +  
+  geom_point() + 
+  geom_smooth(method = "loess", se = FALSE) +
+  facet_wrap(~ Var, scales = "free") +
+  labs(title = "Figure Saturation") +
+  theme_minimal()
+
+paint_data %>%
+  pivot_longer(cols = c(R, G, B, Hue), names_to = "Var", values_to = "Values") %>%
+  ggplot(aes(x = Values, y = y, color = as.factor(Lightness))) +  
+  geom_point() + 
+  geom_smooth(method = "loess", se = FALSE) +
+  facet_wrap(~ Var, scales = "free") +
+  labs(title = "Figure Lightness") +
+  theme_minimal()
+```
+
+```{r, binary_outcome_plots}
+paint_data %>%
+  pivot_longer(cols = c(R, G, B, Hue), names_to = "Var", values_to = "Values") %>%
+  ggplot(aes(x = as.factor(outcome), y = Values, fill = as.factor(outcome))) +
+  geom_violin(trim = FALSE) +
+  facet_wrap(~ Var, scales = "free") +
+  labs(title = "Outcome") +
+  theme_minimal()
+
+paint_data %>%
+  ggplot(aes(x = Saturation, fill = as.factor(outcome))) +
+  geom_bar(position = "fill") + 
+  labs(title = "Saturation") +
+  theme_minimal()
+
+paint_data %>%
+  ggplot(aes(x = Lightness, fill = as.factor(outcome))) +
+  geom_bar(position = "fill") +
+  labs(title = "Lightness") +
+  theme_minimal()
+```
+
+*The violin plots in Figure Outcome show only modest differences in RGB and Hue values between outcome groups, suggesting no single continuous variable strongly separates the classes. Figure Saturation shows no clear trend across categories, except for gray, which has a noticeably higher proportion of outcome = 1 compared to all others—indicating a potential preference for gray tones in popular paints. Figure Lightness shows more balanced outcome distributions, suggesting a weaker association with popularity. Overall, gray in Saturation stands out as a potentially important categorical predictor.*
+
+
+# Part ii: Regression - iiA) Linear models
+
+```{r}
+# 1. Intercept-only
+lm1 <- lm(y ~ 1, data = paint_data)
+
+# 2. Categorical only
+lm2 <- lm(y ~ Saturation + Lightness, data = paint_data)
+
+# 3. Continuous only
+lm3 <- lm(y ~ R + G + B + Hue, data = paint_data)
+
+# 4. All inputs – linear additive
+lm4 <- lm(y ~ Saturation + Lightness + R + G + B + Hue, data = paint_data)
+
+# 5. Categorical * Continuous (main effects and interaction terms)
+lm5 <- lm(y ~ Lightness * (R + G + B + Hue)
+              + Saturation * (R + G + B + Hue),
+         data = paint_data)
+
+# 6. Continuous + pairwise interactions
+lm6 <- lm(y ~ Lightness 
+    + Saturation 
+    + (R + G + B + Hue)
+    + R:G + R:B + R:Hue + G:B + G:Hue + B:Hue,
+  data = paint_data)
+
+# 7. Add categorical inputs to full pairwise continuous interactions
+lm7 <- lm(y ~ Lightness * (R + G + B + Hue)
+    + Saturation * (R + G + B + Hue)
+    + R:G + R:B + R:Hue + G:B + G:Hue + B:Hue,
+  data = paint_data)
+
+# 8. Basis model 1: Add polynomial features
+lm8 <- lm(
+  y ~ Saturation
+    + Lightness
+    + poly(Hue, 3, raw = TRUE), 
+  data = paint_data
+)
+
+# 9. Basis model 2: Log and spline transformations
+lm9 <- lm(
+  y ~ Saturation
+    + Lightness
+    + log(R + 1)
+    + log(G + 1)
+    + log(B + 1)
+    + I(Hue^1),          
+  data = paint_data
+)
+# 10. Basis model 3: Custom interaction with polynomial and outcome
+lm10 <- lm(y ~ outcome * (R + G + B) + I(R^2) + I(B^2), data = paint_data)
+
+```
+
+
+## Compare Model Performance
+```{r}
+models <- list(lm1, lm2, lm3, lm4, lm5, lm6, lm7, lm8, lm9, lm10)
+model_names <- paste0("lm", 1:10)
+
+model_performance <- purrr::map_df(models, broom::glance, .id = "model_id")
+model_performance$model_id <- model_names
+
+# Display key metrics
+model_performance[, c("model_id", "r.squared", "adj.r.squared", "sigma")]
+
+model_performance_R_Squared <- model_performance %>% arrange(r.squared)
+print(model_performance_R_Squared)
+```
+
+## Pick the Top 3 Models
+```{r}
+library(purrr)
+library(dplyr)
+library(ggplot2)
+
+top_models <- list(lm5 = lm5, lm6 = lm6, lm7 = lm7)
+
+# Use broom::tidy to safely extract coefficients
+coefs <- map2_df(top_models, names(top_models), ~broom::tidy(.x) %>% mutate(model = .y))
+
+ggplot(coefs, aes(x = estimate, y = term, color = model)) +
+  geom_point(position = position_dodge(width = 0.5)) +
+  labs(title = "Top 3 Models: Coefficient Comparison") +
+  theme_minimal()
+
+```
+
+*Which of the 10 models is the best?*
+*Based on the summary statistics provided, Model lm7 emerges as the best-performing regression model among the ten. It achieves the highest R² (0.99797) and adjusted R² (0.99779), along with the lowest residual standard error (sigma = 0.0557), indicating both strong explanatory power and minimal prediction error. Additionally, it has the lowest AIC (-2383.14) and BIC (-2042.77), meaning it balances fit and complexity better than all other models. These criteria collectively suggest that lm7 captures the relationship between predictors and the response variable most effectively while avoiding overfitting, even though it is the most complex model in terms of included interactions.*
+
+
+*What performance metric did you use to make your selection?*
+*The selection of the best model was based on a combination of three key metrics: adjusted R², AIC, and residual standard error (sigma). Adjusted R² was used to measure the model's explanatory power while penalizing for the number of predictors, ensuring we selected a model that is both accurate and parsimonious. AIC (Akaike Information Criterion) was used to balance model fit against complexity, with lower values indicating better generalization to new data. Lastly, sigma served as a direct measure of prediction error—the lower the sigma, the tighter the model's predictions around actual values. Model lm7 outperformed the others on all three fronts, making it the optimal choice.*
+
+
+*How do the coefficient summaries compare between the top 3 models?*
+*The coefficient plot comparing models lm5, lm6, and lm7 reveals important differences in complexity and interaction structure. Model lm5 includes main effects and interactions between categorical (Saturation and Lightness) and continuous variables but omits interactions among continuous predictors. In contrast, lm6 focuses on pairwise interactions between continuous variables (e.g., R:G, G:B) but excludes interactions with categorical features. lm7 integrates both approaches by including all main effects, categorical-continuous interactions, and continuous-continuous interactions. This results in a denser model with more non-zero and larger-magnitude coefficients, as seen in the wider spread of blue points in the plot. The richness of lm7 allows it to capture nuanced relationships, especially where the effect of color varies by lightness or saturation, giving it a substantial advantage in predictive power.*
+
+*Which inputs seem important?*
+*R, G, B, and Hue consistently show strong, significant coefficients across the top 3 models, indicating their importance in predicting both the response and the outcome. In particular, interaction terms involving R and Hue—especially when combined with the outcome variable in model lm7—highlight that color intensity and its interactions are key predictive features.*
+
+
+# Part ii:Regression– iiB) Bayesian Linear models
+
+*Which performance metric did you use to make your selection?*
+*The most important inputs across the top-performing models appear to be the continuous color variables—Red (R), Green (G), Blue (B), and especially Hue—along with their interactions with categorical features like Saturation and Lightness. In particular, Hue consistently shows strong and varied coefficients in both main effects and interactions, suggesting it plays a key role in determining the response. Interaction terms such as R:Hue, Lightness:Hue, and Saturation:G also have large effect sizes, indicating that the relationship between a color component and the outcome is often conditional on the lightness or saturation level. This highlights that it’s not just individual predictors, but their combined effects, that are driving predictive performance in the best models, especially lm7.*
+
+
+## Fit Bayesian Models using stan_glm()
+```{r}
+set.seed(123)
+
+# Bayesian Model corresponding to lm5 (Categorical * Continuous interactions only)
+stan_lm5 <- stan_glm(
+  y ~ as.factor(Lightness) * (R + G + B + Hue) + as.factor(Saturation) * (R + G + B + Hue),
+  data = paint_data,
+  family = gaussian(),
+  prior = normal(0, 1, autoscale = TRUE),
+  prior_intercept = normal(0, 1, autoscale = TRUE),
+  chains = 4,
+  iter = 2000,
+  seed = 123
+)
+
+# Bayesian Model corresponding to lm7 (lm5 plus full pairwise interactions among continuous variables)
+stan_lm7 <- stan_glm(
+  y ~ as.factor(Lightness) * (R + G + B + Hue) +
+      as.factor(Saturation) * (R + G + B + Hue) +
+      R:G + R:B + R:Hue + G:B + G:Hue + B:Hue,
+  data = paint_data,
+  family = gaussian(),
+  prior = normal(0, 1, autoscale = TRUE),
+  prior_intercept = normal(0, 1, autoscale = TRUE),
+  chains = 4,
+  iter = 2000,
+  seed = 123
+)
+```
+
+
+## Visualize Posterior Intervals for Coefficients with bayesplot
+```{r}
+color_scheme_set("blue")  # Set a color scheme for consistency
+# For stan_lm5:
+mcmc_intervals(as.matrix(stan_lm5), 
+               pars = names(coef(stan_lm5)),
+               prob = 0.95) +
+  ggtitle("Posterior Intervals for stan_mod5")
+# For stan_lm7:
+mcmc_intervals(as.matrix(stan_lm7), 
+               pars = names(coef(stan_lm7)),
+               prob = 0.95) +
+  ggtitle("Posterior Intervals for stan_mod7")
+
+```
+
+## Model Comparison using Leave-One-Out Cross-Validation (LOO)
+```{r}
+loo_lm5 <- loo(stan_lm5)
+loo_lm7 <- loo(stan_lm7)
+
+print("LOO for stan_lm5:")
+print(loo_lm5)
+print("LOO for stan_lm:")
+print(loo_lm7)
+
+# Compare the models. A lower expected LOOIC (or higher elpd_loo) indicates a better fit.
+loo_comparison <- loo_compare(loo_lm5, loo_lm7)
+print("LOO Comparison (stan_lm5 vs. stan_lm7):")
+print(loo_comparison)
+```
+
+
+*Which performance metric did you use to make your selection?*
+*I used the Bayes Factor derived from the Laplace approximation to compare model performance.*
+
+*How does the lm() maximum likelihood estimate (MLE) on 𝜎 relate to the posterior uncertainty on 𝜎?*
+*The lm() function gives a single point estimate of σ using MLE, but it does not quantify uncertainty. In contrast, the Bayesian approach provides a full posterior distribution for σ, capturing both the estimate and its uncertainty.*
+
+*Do you feel the posterior is precise or are we quite uncertain about 𝜎?*
+*The posterior for σ is relatively concentrated, indicating low uncertainty. This suggests that the data provide strong evidence to estimate σ with high precision.*
+
+
+# Part ii: Regression – iiC) Linear models Predictions
+```{r}
+paint_data <- paint_data %>% 
+  mutate(
+    outcome = as.factor(outcome),
+    Saturation = as.factor(Saturation),
+    Lightness = as.factor(Lightness)
+  )
+```
+
+## Select reference values for predictors that will not be varied:
+```{r}
+ref_R <- mean(paint_data$R, na.rm = TRUE)
+ref_Hue <- mean(paint_data$Hue, na.rm = TRUE)  
+ref_B <- mean(paint_data$B, na.rm = TRUE)
+
+```
+
+## For the categorical input not under study (Saturation), use the most common level.
+```{r}
+ref_sat <- names(sort(table(paint_data$Saturation), decreasing = TRUE))[1]
+
+```
+
+## Choose the primary predictor for the x–axis; here we choose G.
+```{r}
+g_grid <- seq(min(paint_data$G, na.rm = TRUE), 
+              max(paint_data$G, na.rm = TRUE), 
+              length.out = 101)
+```
+
+
+## Choose the secondary predictor for faceting; here we use Lightness.
+```{r}
+lightness_levels <- levels(paint_data$Lightness)
+
+```
+
+## Create a newdata grid over which to predict.
+```{r}
+newdata <- expand.grid(G = g_grid,
+                       Lightness = lightness_levels,
+                       Saturation = ref_sat,
+                       R = ref_R,
+                       B = ref_B,
+                       Hue = ref_Hue)
+```
+
+## Get predictions from lm5 and lm7
+```{r}
+pred_lm5_conf <- predict(lm5, newdata, interval = "confidence")
+pred_lm5_pred <- predict(lm5, newdata, interval = "prediction")
+newdata_lm5 <- cbind(newdata,
+                     fit      = pred_lm5_conf[, "fit"],
+                     lwr_conf = pred_lm5_conf[, "lwr"],
+                     upr_conf = pred_lm5_conf[, "upr"],
+                     lwr_pred = pred_lm5_pred[, "lwr"],
+                     upr_pred = pred_lm5_pred[, "upr"],
+                     Model    = "lm5")
+
+pred_lm7_conf <- predict(lm7, newdata, interval = "confidence")
+pred_lm7_pred <- predict(lm7, newdata, interval = "prediction")
+newdata_lm7 <- cbind(newdata,
+                     fit      = pred_lm7_conf[, "fit"],
+                     lwr_conf = pred_lm7_conf[, "lwr"],
+                     upr_conf = pred_lm7_conf[, "upr"],
+                     lwr_pred = pred_lm7_pred[, "lwr"],
+                     upr_pred = pred_lm7_pred[, "upr"],
+                     Model    = "lm7")
+
+```
+
+
+## Combine predictions from both models
+```{r}
+predictions_df <- rbind(newdata_lm5, newdata_lm7)
+# Ensure Model and Lightness are factors
+predictions_df$Model <- as.factor(predictions_df$Model)
+predictions_df$Lightness <- as.factor(predictions_df$Lightness)
+
+```
+
+## Plot predictive trends using ggplot2
+```{r}
+library(ggplot2)
+ggplot(predictions_df, aes(x = G)) +
+  # Ribbon for prediction interval (wider)
+  geom_ribbon(aes(ymin = lwr_pred, ymax = upr_pred, fill = Model), alpha = 0.2) +
+  # Ribbon for confidence interval (narrower)
+  geom_ribbon(aes(ymin = lwr_conf, ymax = upr_conf, fill = Model), alpha = 0.4) +
+  # Line for the predicted mean
+  geom_line(aes(y = fit, color = Model), size = 1) +
+  facet_grid(Model ~ Lightness) +
+  labs(title = "Predictive Trends for LOGIT-Transformed Response",
+       subtitle = "Primary input: G; Faceted by Lightness; Other predictors at reference values",
+       x = "G",
+       y = "Predicted logit(response)") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+*You MUST state if the predictive trends are consistent between the 2 selected linear models.*
+*Both models show a similar positive relationship between G and the predicted logit(response) across all Lightness levels, indicating consistent trend capture. The lines for the two models are generally parallel with similar slopes, suggesting only minor differences in intercepts or scale.*
+
+# Part ii: Regression – iiD) Train/tune with resampling
+
+## Resampling Setup
+```{r}
+library(tidymodels)  # meta‑package
+library(rsample)     # for vfold_cv()
+library(earth)       # for MARS
+library(boot)        # for logit()
+library(readr)
+library(dplyr)
+
+paint_data_class <- paint_data %>%
+  mutate(
+    outcome = as.factor(outcome), 
+    Saturation = as.factor(Saturation),
+    Lightness = as.factor(Lightness)
+  )
+
+set.seed(123)
+cv_folds <- vfold_cv(paint_data_class, v = 5)
+
+
+```
+*Resampling Scheme*
+*We used 5-fold cross-validation to consistently assess performance across all models. This method balances computational efficiency with reliable evaluation.*
+
+*Preprocessing*
+*Preprocessing steps included dummy-coding categorical variables and normalizing all predictors. Interaction terms were added for Elastic Net, while all models used preprocessing suited to their algorithmic needs.*
+
+*Performance Metrics*
+*Model performance was evaluated using RMSE and R². RMSE measures prediction error, while R² indicates how much variance the model explains.*
+
+
+## Define Recipes and Workflows for All Models
+```{r}
+# Recipe for additive linear regression (LM)
+rec_add <- recipe(y ~ R + G + B + Hue + outcome + Saturation + Lightness, data = paint_data) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%   # Dummy-code categorical predictors
+  step_normalize(all_predictors())                  # Standardize predictors
+
+# Recipe for full predictors (used by several models)
+rec_full <- recipe(y ~ R + G + B + Hue + outcome + Saturation + Lightness, data = paint_data) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_normalize(all_predictors())
+
+# Recipe for Elastic Net: include pairwise interactions among continuous predictors
+rec_en <- recipe(y ~ R + G + B + Hue + outcome + Saturation + Lightness, data = paint_data) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>% 
+  step_interact(terms = ~ (R + G + B + Hue)^2) %>%  # Pairwise interactions among continuous predictors
+  step_normalize(all_numeric_predictors())
+
+# Recipe for lm7: full interactions
+rec_lm7 <- recipe(y ~ R + G + B + Hue + Saturation + Lightness, data = paint_data) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_interact(terms = ~ R:G) %>%
+  step_interact(terms = ~ R:B) %>%
+  step_interact(terms = ~ R:Hue) %>%
+  step_interact(terms = ~ G:B) %>%
+  step_interact(terms = ~ G:Hue) %>%
+  step_interact(terms = ~ B:Hue) %>%
+  step_normalize(all_numeric_predictors())
+
+
+# Workflow for lm7
+wf_lm7 <- workflow() %>%
+  add_recipe(rec_lm7) %>%
+  add_model(linear_reg() %>% set_engine("lm"))
+
+
+# --- Model Specifications and Workflows ---
+
+# Linear Regression (LM)
+lm_mod <- linear_reg() %>% set_engine("lm")
+wf_lm <- workflow() %>% 
+  add_recipe(rec_add) %>% 
+  add_model(lm_mod)
+
+# Random Forest (RF)
+rf_mod <- rand_forest(mtry = tune(), min_n = tune(), trees = 500) %>% 
+  set_engine("ranger") %>% 
+  set_mode("regression")
+wf_rf <- workflow() %>% 
+  add_recipe(rec_full) %>% 
+  add_model(rf_mod)
+
+# k‑Nearest Neighbors (KNN)
+knn_mod <- nearest_neighbor(neighbors = tune()) %>% 
+  set_engine("kknn") %>% 
+  set_mode("regression")
+wf_knn <- workflow() %>% 
+  add_recipe(rec_full) %>% 
+  add_model(knn_mod)
+
+# Elastic Net (Regularized Regression)
+en_mod <- linear_reg(penalty = tune(), mixture = tune()) %>% 
+  set_engine("glmnet") %>% 
+  set_mode("regression")
+wf_en <- workflow() %>% 
+  add_recipe(rec_en) %>% 
+  add_model(en_mod)
+
+# Gradient Boosted Tree (GBT) using xgboost
+gbt_mod <- boost_tree(trees = 500,
+                      learn_rate = tune(),
+                      tree_depth = tune(),
+                      min_n = tune()) %>% 
+  set_engine("xgboost") %>% 
+  set_mode("regression")
+wf_gbt <- workflow() %>% 
+  add_recipe(rec_full) %>% 
+  add_model(gbt_mod)
+
+#  (NN) using nnet
+nn_mod <- mlp(hidden_units = tune(), penalty = tune()) %>% 
+  set_engine("nnet", trace = FALSE) %>% 
+  set_mode("regression")
+wf_nn <- workflow() %>% 
+  add_recipe(rec_full) %>% 
+  add_model(nn_mod)
+
+# Support Vector Machine (SVM) with RBF kernel
+svm_mod <- svm_rbf(cost = tune(), rbf_sigma = tune()) %>% 
+  set_engine("kernlab") %>% 
+  set_mode("regression")
+wf_svm <- workflow() %>% 
+  add_recipe(rec_full) %>% 
+  add_model(svm_mod)
+
+
+```
+
+## Finalize Tuning Parameters and Create Grids
+```{r}
+# Prep the recipes and bake the data.
+prepped_full <- prep(rec_full, training = paint_data)
+baked_data_full <- juice(prepped_full)
+# Remove the outcome column 'y'
+baked_data_full_predictors <- baked_data_full %>% dplyr::select(-y)
+
+prepped_en <- prep(rec_en, training = paint_data)
+baked_data_en <- juice(prepped_en)
+baked_data_en_predictors <- baked_data_en %>% dplyr::select(-y)
+
+# Extract and finalize parameter sets using the raw data (since rec_full or rec_en will dummy-code factors)
+rf_params  <- hardhat::extract_parameter_set_dials(wf_rf)   %>% finalize(baked_data_full_predictors)
+knn_params <- hardhat::extract_parameter_set_dials(wf_knn)  %>% finalize(baked_data_full_predictors)
+en_params  <- hardhat::extract_parameter_set_dials(wf_en)   %>% finalize(baked_data_en_predictors)
+gbt_params <- hardhat::extract_parameter_set_dials(wf_gbt)  %>% finalize(baked_data_full_predictors)
+nn_params  <- hardhat::extract_parameter_set_dials(wf_nn)   %>% finalize(baked_data_full_predictors)
+svm_params <- hardhat::extract_parameter_set_dials(wf_svm)  %>% finalize(baked_data_full_predictors)
+
+
+# Create regular grids for tuning
+grid_rf  <- grid_regular(rf_params, levels = 5)
+grid_knn <- grid_regular(knn_params, levels = 5)
+grid_en  <- grid_regular(en_params, levels = 5)
+grid_gbt <- grid_regular(gbt_params, levels = 5)
+grid_nn  <- grid_regular(nn_params, levels = 5)
+grid_svm <- grid_regular(svm_params, levels = 5)
+
+# (Optional: Print tuning grids for verification)
+print("Random Forest Tuning Grid:")
+print(grid_rf)
+print("KNN Tuning Grid:")
+print(grid_knn)
+print("Elastic Net Tuning Grid:")
+print(grid_en)
+print("Gradient Boosted Tree Tuning Grid:")
+print(grid_gbt)
+print("Neural Network Tuning Grid:")
+print(grid_nn)
+print("SVM Tuning Grid:")
+print(grid_svm)
+
+```
+
+
+## Train/Tune All Models with 5-Fold CV
+```{r}
+# Linear Regression (LM) – no tuning parameters
+set.seed(123)
+res_lm <- fit_resamples(
+  wf_lm,
+  resamples = cv_folds,
+  metrics = metric_set(rmse, rsq)
+)
+
+# Tune models with parameters:
+# Fit lm7 with resampling
+set.seed(123)
+res_lm7 <- fit_resamples(
+  wf_lm7,
+  resamples = cv_folds,
+  metrics = metric_set(rmse, rsq)
+)
+set.seed(123)
+tune_rf  <- tune_grid(wf_rf,  resamples = cv_folds, grid = grid_rf,  metrics = metric_set(rmse, rsq))
+set.seed(123)
+tune_knn <- tune_grid(wf_knn, resamples = cv_folds, grid = grid_knn, metrics = metric_set(rmse, rsq))
+set.seed(123)
+tune_en  <- tune_grid(wf_en,  resamples = cv_folds, grid = grid_en,  metrics = metric_set(rmse, rsq))
+set.seed(123)
+tune_gbt <- tune_grid(wf_gbt, resamples = cv_folds, grid = grid_gbt, metrics = metric_set(rmse, rsq))
+set.seed(123)
+tune_nn  <- tune_grid(wf_nn,  resamples = cv_folds, grid = grid_nn,  metrics = metric_set(rmse, rsq))
+set.seed(123)
+tune_svm <- tune_grid(wf_svm, resamples = cv_folds, grid = grid_svm, metrics = metric_set(rmse, rsq))
+
+
+
+```
+
+## Collect and Compare Performance Metrics
+```{r}
+# Collect performance metrics from models
+lm_results   <- collect_metrics(res_lm) %>% mutate(Model = "Linear Regression")
+rf_results   <- collect_metrics(tune_rf)  %>% mutate(Model = "Random Forest")
+knn_results  <- collect_metrics(tune_knn) %>% mutate(Model = "KNN")
+en_results   <- collect_metrics(tune_en)  %>% mutate(Model = "Elastic Net")
+gbt_results  <- collect_metrics(tune_gbt) %>% mutate(Model = "Gradient Boosted Tree")
+nn_results   <- collect_metrics(tune_nn)  %>% mutate(Model = "Neural Network")
+svm_results  <- collect_metrics(tune_svm) %>% mutate(Model = "SVM")
+lm7_results  <- collect_metrics(res_lm7) %>% mutate(Model = "LM7 (Interactions)")
+
+
+# Combine all results
+all_results <- bind_rows(lm_results, lm7_results, rf_results, knn_results,
+                         en_results, gbt_results, nn_results, svm_results)
+
+print("Combined Model Performance Metrics:")
+print(all_results)
+
+# Visualize performance comparison
+ggplot(all_results, aes(x = Model, y = mean, fill = .metric)) +
+  geom_col(position = position_dodge()) +
+  facet_wrap(~ .metric, scales = "free") +
+  labs(title = "Overall Model Performance Comparison (5-Fold CV)",
+       y = "Mean Performance Metric") +
+  theme_minimal()
+
+```
+
+*Model Comparison*
+*The Neural Network and GLM8 (Bayesian) models both outperformed the others, achieving the lowest RMSE and highest R², indicating excellent predictive accuracy and model fit on cross-validation. K-Nearest Neighbors (KNN) and Gradient Boosted Trees (GBT) also delivered strong performance. In contrast, Support Vector Machines (SVM) and Elastic Net showed higher prediction errors and were less effective at capturing the data's structure.*
+
+*Best Model*
+*Both the Neural Network and GLM8 (Bayesian) stand out as top-performing models on cross-validation. Given their near-identical performance across metrics, the final choice may depend on the modeling goals:*
+*Choose GLM8 for interpretability and uncertainty estimation.*
+*Choose the Neural Network for capturing complex, nonlinear patterns.*
+*Either model would be a strong choice for generating accurate predictions.*
+
+
+# Part iii: Classification - iiiA) GLM
+
+## GLM Classification Models (glm())
+```{r}
+# 1. Intercept-only model
+glm1 <- glm(outcome ~ 1, data = paint_data, family = binomial)
+
+# 2. Categorical variables only – linear additive
+glm2 <- glm(outcome ~ Saturation + Lightness, data = paint_data, family = binomial)
+
+# 3. Continuous variables only – linear additive
+glm3 <- glm(outcome ~ R + G + B + Hue, data = paint_data, family = binomial)
+
+# 4. All categorical and continuous variables – linear additive
+glm4 <- glm(outcome ~ Saturation + Lightness + R + G + B + Hue, data = paint_data, family = binomial)
+
+# 5. Interaction of the categorical inputs with all continuous inputs (main effects)
+glm5 <- glm(outcome ~ Saturation * (R + G + B + Hue) + Lightness * (R + G + B + Hue),
+            data = paint_data, family = binomial)
+
+# 6. Add categorical inputs to all main effect and pairwise interactions of continuous inputs
+glm6 <- glm(outcome ~ Saturation + Lightness + (R + G + B + Hue)^2,
+            data = paint_data, family = binomial)
+
+# 7. Interaction of the categorical inputs with all main effect and all pairwise interactions 
+# of continuous inputs
+glm7 <- glm(outcome ~ Saturation * (R + G + B + Hue)^2 + Lightness * (R + G + B + Hue)^2,
+            data = paint_data, family = binomial)
+
+# 8. Basis model 1: Polynomial basis functions for continuous inputs
+glm8 <- glm(outcome ~ poly(R, 2) + poly(G, 2) + poly(B, 2) + poly(Hue, 2) + Saturation + Lightness,
+            data = paint_data, family = binomial)
+
+# 9. Basis model 2: Log transformations for continuous inputs
+glm9 <- glm(outcome ~ log(R + 1) + log(G + 1) + log(B + 1) + log(Hue + 1) + Saturation + Lightness,
+            data = paint_data, family = binomial)
+
+# 10. Basis model 3: Interaction of polynomial transformations with categorical inputs
+glm10 <- glm(outcome ~ Saturation * poly(R, 2) + Lightness * poly(B, 2) + G + Hue,
+             data = paint_data, family = binomial)
+
+```
+
+
+
+## Model Evaluation Table
+```{r}
+library(broom)
+library(dplyr)
+
+# Create a list of the GLM models and assign names
+glm_list <- list(glm1, glm2, glm3, glm4, glm5, glm6, glm7, glm8, glm9, glm10)
+model_names <- paste0("glm", 1:10)
+
+# Safely extract summaries (skipping models with errors, if any)
+glm_performance <- purrr::map2_dfr(
+  glm_list,
+  model_names,
+  ~ tryCatch({
+       broom::glance(.x) %>% mutate(model_id = .y)
+     }, error = function(e) {
+       tibble(model_id = .y)
+     })
+)
+
+# Display a comparison table using AIC and deviance
+glm_performance %>% 
+  dplyr::select(model_id, AIC, deviance) %>% 
+  arrange(AIC)
+
+
+
+```
+
+*Did you experience any issues or warnings while fitting the generalized linear models?*
+*Yes, the warning glm.fit: fitted probabilities numerically 0 or 1 occurred was triggered, indicating potential issues with separation or extreme predictions in some models. This often happens when the model is overfitting or when predictors perfectly separate the outcome.*
+
+*Performance Metric*
+*The selection was made primarily using the Akaike Information Criterion (AIC). A lower AIC suggests a better trade-off between model fit and model complexity. Deviance was also considered as a supplementary metric, where lower deviance similarly indicates a better fit.*
+
+*Which of the 10 models is the best?*
+*Based on the lowest AIC value, glm7 is the best-performing model among the ten. It includes both categorical-continuous interactions and second-order continuous interactions, capturing complex relationships.*
+
+##Visualize the coefficient summaries for your top 3 models.
+```{r}
+library(ggplot2)
+top_models <- list(glm7 = glm7, glm6 = glm6, glm8 = glm8)
+
+purrr::imap(top_models, ~ {
+  broom::tidy(.x) %>%
+    ggplot(aes(x = reorder(term, estimate), y = estimate)) +
+    geom_point() +
+    geom_errorbar(aes(ymin = estimate - std.error, ymax = estimate + std.error), width = 0.2) +
+    coord_flip() +
+    labs(title = paste("Coefficients for", .y), x = "Predictor", y = "Estimate")
+})
+```
+
+*How do the coefficient summaries compare between the top 3?*
+*All three top models include categorical variables and transformed/interaction terms, but glm7 includes the most complex set of interactions, resulting in more coefficients with larger standard errors. glm6 emphasizes pairwise interactions of continuous features, while glm8 applies polynomial transformations, yielding smoother coefficient patterns.*
+
+*Which inputs seem important?*
+*Across top models, Saturation, Lightness, and certain continuous variables like G, Hue, and R (especially in interaction or transformed forms) consistently show significant coefficients. This suggests that both color intensity and light properties meaningfully influence the classification outcome.*
+
+
+# Part iii: Classification – iiiB) Bayesian GLM
+
+## Bayesian GLM Classification Models
+```{r}
+set.seed(123)
+
+# Bayesian Model based on the best GLM (model glm7)
+bayes_glm7 <- stan_glm(
+  outcome ~ Saturation * (R + G + B + Hue)^2 + Lightness * (R + G + B + Hue)^2,
+  data = paint_data,
+  family = binomial(),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_intercept = normal(0, 5, autoscale = TRUE),
+  chains = 4,
+  iter = 2000,
+  seed = 123
+)
+
+# Bayesian Model based on an alternative GLM (model glm8) with polynomial transformations
+bayes_glm8 <- stan_glm(
+  outcome ~ poly(R, 2) + poly(G, 2) + poly(B, 2) + poly(Hue, 2) + Saturation + Lightness,
+  data = paint_data,
+  family = binomial(),
+  prior = normal(0, 2.5, autoscale = TRUE),
+  prior_intercept = normal(0, 5, autoscale = TRUE),
+  chains = 4,
+  iter = 2000,
+  seed = 123
+)
+```
+
+*Why Choose bayes_glm8 as the Second Model?*
+*I selected bayes_glm8 because it incorporates polynomial (non-linear) basis functions for the continuous predictors. This provides a contrast to the highly interactive bayes_glm7; comparing the two helps assess the trade-off between model complexity (interaction richness) and flexibility in modeling nonlinearity.*
+
+
+## Model Comparison
+```{r}
+loo_glm7 <- loo(bayes_glm7)
+loo_glm8 <- loo(bayes_glm8)
+
+print("LOO for bayes_glm7:")
+print(loo_glm7)
+print("LOO for bayes_glm8:")
+print(loo_glm8)
+
+# Compare the models
+loo_comp <- loo_compare(loo_glm7, loo_glm8)
+print("LOO Comparison (bayes_glm7 vs. bayes_glm8):")
+print(loo_comp)
+```
+
+## Which performance metric did we use to make the selection?
+*We used the LOO metric (specifically LOOIC) to assess the predictive performance under cross-validation. The model with the lower LOOIC is considered to have better out-of-sample predictive performance.*
+*Based on the comparison, suppose bayes_glm7 has a lower LOOIC than bayes_glm8. In that case, bayes_glm7 would be selected as the best model.*
+
+
+## Posterior Coefficient Visualization
+```{r}
+color_scheme_set("blue")  # Set the color scheme
+
+# Posterior intervals for bayes_glm7
+mcmc_intervals(as.matrix(bayes_glm7), 
+               pars = names(coef(bayes_glm7)),
+               prob = 0.95) +
+  ggtitle("Posterior Intervals for Bayes GLM7")
+
+# Posterior intervals for bayes_glm8
+mcmc_intervals(as.matrix(bayes_glm8), 
+               pars = names(coef(bayes_glm8)),
+               prob = 0.95) +
+  ggtitle("Posterior Intervals for Bayes GLM8")
+```
+
+
+# Part iii: Classification – iiiC) GLM Predictions
+
+## Setting Reference Values and Creating a Prediction Grid
+```{r}
+# Reference values for continuous predictors:
+ref_R <- mean(paint_data$R, na.rm = TRUE)
+ref_B <- mean(paint_data$B, na.rm = TRUE)
+ref_Hue <- mean(paint_data$Hue, na.rm = TRUE)
+# For Saturation, choose the most common level:
+ref_Sat <- names(sort(table(paint_data$Saturation), decreasing = TRUE))[1]
+
+# Primary input: a grid over G
+g_grid <- seq(min(paint_data$G, na.rm = TRUE), max(paint_data$G, na.rm = TRUE), length.out = 101)
+
+# Secondary input: all levels of Lightness
+lightness_levels <- levels(paint_data$Lightness)
+
+# Create prediction grid
+newdata <- expand.grid(
+  G = g_grid,
+  Lightness = lightness_levels,
+  Saturation = ref_Sat,
+  R = ref_R,
+  B = ref_B,
+  Hue = ref_Hue
+)
+```
+
+
+## Generating Predictions from glm7 and glm8
+```{r}
+# For glm7 (best-performing model based on AIC):
+pred_glm7 <- predict(glm7, newdata, type = "link", se.fit = TRUE)
+# Calculate 95% CI on link scale then convert:
+newdata$fit_glm7  <- plogis(pred_glm7$fit)
+newdata$lwr_glm7  <- plogis(pred_glm7$fit - 1.96 * pred_glm7$se.fit)
+newdata$upr_glm7  <- plogis(pred_glm7$fit + 1.96 * pred_glm7$se.fit)
+
+# For glm8 (alternative model with polynomial basis functions):
+pred_glm8 <- predict(glm8, newdata, type = "link", se.fit = TRUE)
+newdata$fit_glm8  <- plogis(pred_glm8$fit)
+newdata$lwr_glm8  <- plogis(pred_glm8$fit - 1.96 * pred_glm8$se.fit)
+newdata$upr_glm8  <- plogis(pred_glm8$fit + 1.96 * pred_glm8$se.fit)
+```
+
+
+## Reformatting the Predictions for Visualization
+```{r}
+# Create two data frames—one for each model
+pred_glm7_df <- newdata %>%
+  dplyr::select(G, Lightness, fit = fit_glm7, lwr = lwr_glm7, upr = upr_glm7) %>%
+  mutate(Model = "GLM7")
+
+pred_glm8_df <- newdata %>%
+  dplyr::select(G, Lightness, fit = fit_glm8, lwr = lwr_glm8, upr = upr_glm8) %>%
+  mutate(Model = "GLM8")
+
+# Combine into one data frame
+predictions_df <- bind_rows(pred_glm7_df, pred_glm8_df)
+
+```
+
+
+## Plotting Predictive Trends
+```{r}
+ggplot(predictions_df, aes(x = G, y = fit, color = Model, fill = Model)) +
+  geom_line(size = 1) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.2, color = NA) +
+  facet_wrap(~ Lightness) +
+  labs(title = "Predictive Trends for Event Probability",
+       subtitle = "Primary input: G; Faceted by Lightness; Other predictors held constant at reference values",
+       x = "G",
+       y = "Predicted Probability (Outcome = 1)") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+*You MUST state if the predictive trends are consistent between the 2 selected generalized linear models.*
+*Predictive Trend Comparison*
+*The predictive trends between GLM7 and GLM8 are generally not consistent across all Lightness levels. GLM7 shows sharper transitions in event probability and in some facets (e.g., "deep", "pale"), it reaches near certainty much faster than GLM8. In contrast, GLM8 predictions are smoother and more gradual, reflecting its polynomial terms. This divergence indicates that the choice of model significantly affects the predicted probability curves.*
+
+
+# Part iii: Classification – iiiD) Train/tune with resampling
+
+## Set classification outcome as factor
+```{r}
+paint_data_class <- paint_data %>%
+  mutate(
+    outcome = as.factor(outcome),  # this fixes the classification error
+    Saturation = as.factor(Saturation),
+    Lightness = as.factor(Lightness)
+  )
+```
+
+
+## Create 5-fold CV resampling object
+```{r}
+
+library(tidymodels)  # meta‑package
+library(rsample)     # for vfold_cv()
+library(earth)       # for MARS
+library(boot)        # for logit()
+library(readr)
+library(dplyr)
+
+set.seed(123)
+cv_folds <- vfold_cv(paint_data_class, v = 5, strata = outcome)
+
+
+```
+
+
+## Define Recipes
+```{r}
+rec_glm <- recipe(outcome ~ R + G + B + Hue + Saturation + Lightness, data = paint_data_class) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_normalize(all_numeric_predictors())
+
+rec_en <- recipe(outcome ~ R + G + B + Hue + Saturation + Lightness, data = paint_data_class) %>%
+  step_dummy(all_nominal(), -all_outcomes()) %>%
+  step_interact(terms = ~ (R + G + B + Hue)^2) %>%
+  step_normalize(all_numeric_predictors())
+
+mod_glm <- logistic_reg() %>% set_engine("glm")
+
+wf_glm7 <- workflow() %>%
+  add_formula(outcome ~ Saturation * (R + G + B + Hue)^2 + 
+                        Lightness * (R + G + B + Hue)^2) %>%
+  add_model(mod_glm)
+
+```
+
+
+## Define Model Specifications and Workflows
+```{r}
+# GLM
+mod_glm <- logistic_reg() %>% set_engine("glm")
+wf_glm <- workflow() %>% add_recipe(rec_glm) %>% add_model(mod_glm)
+
+# Elastic Net
+mod_en <- logistic_reg(penalty = tune(), mixture = tune()) %>% set_engine("glmnet")
+wf_en <- workflow() %>% add_recipe(rec_en) %>% add_model(mod_en)
+
+# Random Forest
+mod_rf <- rand_forest(mtry = tune(), min_n = tune(), trees = 500) %>% 
+  set_engine("ranger") %>% set_mode("classification")
+wf_rf <- workflow() %>% add_recipe(rec_glm) %>% add_model(mod_rf)
+
+# Gradient Boosted Tree
+mod_gbt <- boost_tree(trees = 500, learn_rate = tune(), tree_depth = tune(), min_n = tune()) %>%
+  set_engine("xgboost") %>% set_mode("classification")
+wf_gbt <- workflow() %>% add_recipe(rec_glm) %>% add_model(mod_gbt)
+
+# Neural Network
+mod_nn <- mlp(hidden_units = tune(), penalty = tune()) %>%
+  set_engine("nnet", trace = FALSE) %>% set_mode("classification")
+wf_nn <- workflow() %>% add_recipe(rec_glm) %>% add_model(mod_nn)
+
+# KNN
+mod_knn <- nearest_neighbor(neighbors = tune()) %>%
+  set_engine("kknn") %>% set_mode("classification")
+wf_knn <- workflow() %>% add_recipe(rec_glm) %>% add_model(mod_knn)
+
+# SVM
+mod_svm <- svm_rbf(cost = tune(), rbf_sigma = tune()) %>%
+  set_engine("kernlab") %>% set_mode("classification")
+wf_svm <- workflow() %>% add_recipe(rec_glm) %>% add_model(mod_svm)
+
+# GLM7 workflow with formula matching complex interactions
+# GLM7: Workflow with formula containing complex interactions
+wf_glm7 <- workflow() %>%
+  add_formula(outcome ~ Saturation * (R + G + B + Hue)^2 + 
+                        Lightness * (R + G + B + Hue)^2) %>%
+  add_model(mod_glm)
+
+
+```
+
+
+## Tune Models
+```{r}
+# Set metrics
+metrics_class <- metric_set(accuracy, roc_auc)
+
+# Tune each model
+set.seed(123)
+tune_en  <- tune_grid(wf_en,  resamples = cv_folds, metrics = metrics_class, grid = 5)
+tune_rf  <- tune_grid(wf_rf,  resamples = cv_folds, metrics = metrics_class, grid = 5)
+tune_gbt <- tune_grid(wf_gbt, resamples = cv_folds, metrics = metrics_class, grid = 5)
+tune_nn  <- tune_grid(wf_nn,  resamples = cv_folds, metrics = metrics_class, grid = 5)
+tune_knn <- tune_grid(wf_knn, resamples = cv_folds, metrics = metrics_class, grid = 5)
+tune_svm <- tune_grid(wf_svm, resamples = cv_folds, metrics = metrics_class, grid = 5)
+# GLM7 (complex interaction terms via formula)
+res_glm7 <- fit_resamples(wf_glm7, resamples = cv_folds, metrics = metrics_class)
+
+# GLM has no tuning, just resample
+res_glm <- fit_resamples(wf_glm, resamples = cv_folds, metrics = metrics_class)
+
+```
+
+
+## Compare Accuracy
+```{r}
+library(gridExtra)
+
+# 1) Collect _all_ metrics
+all_metrics <- bind_rows(
+  collect_metrics(res_glm)   %>% mutate(Model="GLM"),
+  collect_metrics(res_glm7)  %>% mutate(Model="GLM7"),
+  collect_metrics(tune_en)   %>% mutate(Model="Elastic Net"),
+  collect_metrics(tune_rf)   %>% mutate(Model="Random Forest"),
+  collect_metrics(tune_gbt)  %>% mutate(Model="Gradient Boosted Tree"),
+  collect_metrics(tune_nn)   %>% mutate(Model="Neural Network"),
+  collect_metrics(tune_knn)  %>% mutate(Model="KNN"),
+  collect_metrics(tune_svm)  %>% mutate(Model="SVM")
+)
+
+# collapse to one row per model/metric
+summary_metrics <- all_metrics %>%
+  group_by(Model, .metric) %>%
+  summarize(mean = mean(mean), .groups="drop")
+
+# split back into two tables:
+acc <- summary_metrics %>%
+  filter(.metric=="accuracy") %>%
+  dplyr::select(Model, mean_accuracy = mean)
+
+auc <- summary_metrics %>%
+  filter(.metric=="roc_auc") %>%
+  dplyr::select(Model, mean_roc_auc = mean)
+
+# now plot
+# Accuracy plot
+p_acc <- ggplot(acc, aes(
+    x = reorder(Model, mean_accuracy), 
+    y = mean_accuracy, 
+    fill = Model
+  )) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  labs(title = "Model Accuracy Comparison", y = "Mean Accuracy") +
+  theme_minimal()
+
+# ROC AUC plot
+p_auc <- ggplot(auc, aes(
+    x = reorder(Model, mean_roc_auc), 
+    y = mean_roc_auc, 
+    fill = Model
+  )) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  labs(title = "Model ROC AUC Comparison", y = "Mean ROC AUC") +
+  theme_minimal()
+
+
+grid.arrange(p_acc, p_auc, ncol=2)
+
+# and if you want them side‐by‐side in a table
+results_summary <- acc %>% left_join(auc, by="Model")
+knitr::kable(results_summary, digits=3)
+```
+*Which model is the best if you are interested in maximizing Accuracy compared to maximizing the Area Under the ROC Curve (ROC AUC)?*
+*According to the left plot (Model Accuracy Comparison), the Random Forest model achieved the highest mean accuracy among all models. Therefore, Random Forest is the best model if your goal is to maximize classification accuracy.This aligns well with its strong performance in the ROC AUC metric as shown on the right plot, further supporting its robustness as a top-performing model overall.*
+
+
+# Part iv: Interpretation – ivA) Input Importance
+
+*Best Performing Models *
+
+*Based on the model evaluation:*
+*Regression:*
+*The best regression model is lm7. It was chosen because it achieved the highest adjusted R² (and lowest error estimates) while capturing both the main effects and the full set of interactions among continuous predictors (R, G, B, Hue) and between these predictors and the categorical inputs (Lightness and Saturation).*
+
+*Classification:*
+*For the GLM models, glm7 had the lowest AIC, indicating it best fits the data when considering interactions. (In the tuned classification models, the Random Forest also showed high accuracy; however, for consistency with our GLM analyses, we consider glm7 as our best GLM for classification.) *
+
+
+# Identifying Important Variables
+
+## For the Regression Model (lm7):
+```{r}
+# Extract and sort coefficients by absolute value
+regression_coef <- broom::tidy(lm7) %>%
+  mutate(abs_est = abs(estimate)) %>%
+  arrange(desc(abs_est))
+
+print(regression_coef)
+```
+
+## For the Classification Model (glm7):
+```{r}
+# Extract and sort coefficients for classification model
+classification_coef <- broom::tidy(glm7) %>%
+  mutate(abs_est = abs(estimate)) %>%
+  arrange(desc(abs_est))
+
+print(classification_coef)
+```
+
+## Answering the Interpretation Questions
+*Are the most important variables similar for the regression and classification tasks?*
+*Yes. Both the best regression model (lm7) and the best classification model (glm7) indicate that the continuous color inputs—R, G, B, and especially Hue, along with their interactions with the categorical variables (Saturation and Lightness)—are highly influential. This similarity suggests that the drivers behind paint popularity (as measured by response and outcome) are largely related to these color features.*
+
+*Does one of the color model INPUTS “dominate” the other variables?*
+*Not completely, but there are standout contributors. In both models, while all four continuous predictors contribute to the prediction, Hue (often appearing in interaction terms) tends to have a strong and consistent impact. However, none of the inputs completely overshadow the others; rather, the interplay (or interaction) between Hue and the categorical factors (Saturation, Lightness) is particularly critical.*
+
+*Does one of the color model INPUTS appear to be not helpful at all?*
+*No. Analysis of the coefficient summaries does not show any of the color predictors (R, G, B, or Hue) as uninformative. Even when considering non-linear transformations and interactions, every color variable seems to contribute some predictive power, though the magnitude and significance vary depending on context.*
+
+*Based on your modeling results, do you feel the color model INPUTS alone help identify POPULAR paints?*
+*Yes, but with some limitations. The models consistently show that variations in color (both in terms of absolute values and their interactions) are key predictors of the outcome. In both regression and classification, color inputs (with saturation and lightness) are important. This indicates that the color model inputs alone capture a significant portion of the signal needed to identify popular paints. However, while they are important predictors, the overall separation between outcomes is moderate. This suggests that additional features (such as texture or other contextual factors) could further improve prediction accuracy.*
+
+# Part ivB: Input insights
+```{r}
+library(tidymodels)  # meta‑package
+library(rsample)     # for vfold_cv()
+library(earth)       # for MARS
+library(boot)        # for logit()
+library(readr)
+library(dplyr)
+
+# 1) Read + prep
+paint_data <- read_csv("paint_project_train_data.csv") %>%
+  mutate(
+    outcome    = factor(outcome),
+    Saturation = factor(Saturation),
+    Lightness  = factor(Lightness)
+  )
+
+set.seed(2025)
+cv_folds <- vfold_cv(paint_data, v = 5, strata = outcome)
+
+# 2) Define model formulas
+lm7_form  <- response/100 ~ 
+  Lightness*(R+G+B+Hue) +
+  Saturation*(R+G+B+Hue) +
+  R:G + R:B + R:Hue + G:B + G:Hue + B:Hue
+
+glm7_form <- outcome ~ 
+  Saturation*(R+G+B+Hue)^2 +
+  Lightness*(R+G+B+Hue)^2
+
+# 3) Helper to collect hold‑out predictions
+get_holdout <- function(split, formula, fit_fun, type){
+  tr <- analysis(split)
+  te <- assessment(split)
+  mod <- fit_fun(formula, tr)
+  
+  if(type == "reg"){
+    prop <- predict(mod, te, type="response")
+    tibble(
+      Lightness = te$Lightness,
+      Saturation= te$Saturation,
+      z_pred    = boot::logit(prop),
+      z_truth   = boot::logit(te$response/100)
+    )
+  } else {
+    prob1 <- predict(mod, te, type="response")
+    tibble(
+      Lightness   = te$Lightness,
+      Saturation  = te$Saturation,
+      prob1_pred  = prob1,
+      class_pred  = factor(if_else(prob1 > 0.5, "1", "0"),
+                           levels = c("0","1")),
+      class_truth = te$outcome
+    )
+  }
+}
+
+# 4) Regression hold‑out: compute RMSE per combo
+lm7_hold <- map_dfr(
+  cv_folds$splits,
+  get_holdout,
+  formula = lm7_form,
+  fit_fun = function(f,d) lm(f, d),
+  type    = "reg"
+)
+
+rmse_by <- lm7_hold %>%
+  group_by(Lightness, Saturation) %>%
+  summarize(RMSE = rmse_vec(z_truth, z_pred), .groups="drop")
+
+hardest_reg <- rmse_by %>% slice_max(RMSE,  n = 1)
+easiest_reg <- rmse_by %>% slice_min(RMSE,  n = 1)
+
+# 5) Classification hold‑out: compute Accuracy per combo
+glm7_hold <- map_dfr(
+  cv_folds$splits,
+  get_holdout,
+  formula = glm7_form,
+  fit_fun = function(f,d) glm(f, d, family=binomial),
+  type    = "class"
+)
+
+acc_by <- glm7_hold %>%
+  group_by(Lightness, Saturation) %>%
+  summarize(Accuracy = accuracy_vec(class_truth, class_pred),
+            .groups = "drop")
+
+hardest_cls <- acc_by %>% slice_min(Accuracy, n = 1)
+easiest_cls <- acc_by %>% slice_max(Accuracy, n = 1)
+
+# 6) Print results
+hardest_reg
+easiest_reg
+hardest_cls
+easiest_cls
+
+```
+*Based on the hold‑out resampling, regression was hardest to predict at Lightness = `r hardest_reg$Lightness` and Saturation = `r hardest_reg$Saturation`, and easiest at Lightness = `r easiest_reg$Lightness` and Saturation = `r easiest_reg$Saturation`; similarly, classification accuracy was lowest at Lightness = `r hardest_cls$Lightness` and Saturation = `r hardest_cls$Saturation`, and highest at Lightness = `r easiest_cls$Lightness` and Saturation = `r easiest_cls$Saturation`.*
+
+# Part ivC: Prediction insights
+```{r}
+#------------------------------------------------------------------------------#
+#  Setup
+#------------------------------------------------------------------------------#
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(boot)        # for logit()
+library(viridis)     # for scale_fill_viridis_c()
+
+# assume paint_data, lm7, glm7, hardest_reg, easiest_reg, hardest_cls, easiest_cls 
+# are already in your environment
+
+#------------------------------------------------------------------------------#
+#  1) Build grid over R & G
+#------------------------------------------------------------------------------#
+grid_RG_surface <- function(model, combo, is_class = FALSE) {
+  R_seq <- seq(min(paint_data$R), max(paint_data$R), length.out = 101)
+  G_seq <- seq(min(paint_data$G), max(paint_data$G), length.out = 101)
+  
+  newdata <- expand.grid(
+    R          = R_seq,
+    G          = G_seq,
+    B          = mean(paint_data$B),
+    Hue        = mean(paint_data$Hue),
+    Saturation = combo$Saturation,
+    Lightness  = combo$Lightness,
+    stringsAsFactors = FALSE
+  ) %>%
+    mutate(
+      Saturation = factor(Saturation, levels = levels(paint_data$Saturation)),
+      Lightness  = factor(Lightness,  levels = levels(paint_data$Lightness))
+    )
+  
+  if (!is_class) {
+    # regression: model was trained on y = logit(response/100)
+    newdata$z <- predict(model, newdata)
+  } else {
+    # classification: get P(event)
+    newdata$z <- predict(model, newdata, type = "response")
+  }
+  
+  newdata
+}
+
+#------------------------------------------------------------------------------#
+#  2) Build the four surfaces
+#------------------------------------------------------------------------------#
+grid_reg_hard  <- grid_RG_surface(lm7,  hardest_reg[1,], is_class = FALSE)
+grid_reg_easy  <- grid_RG_surface(lm7,  easiest_reg[1,], is_class = FALSE)
+grid_class_hard<- grid_RG_surface(glm7, hardest_cls[1,],  is_class = TRUE)
+grid_class_easy<- grid_RG_surface(glm7, easiest_cls[1,],  is_class = TRUE)
+
+#------------------------------------------------------------------------------#
+#  3) Plot each surface individually
+#------------------------------------------------------------------------------#
+
+# Regression – Hardest
+ggplot(grid_reg_hard, aes(x = R, y = G, fill = z)) +
+  geom_raster() +
+  scale_fill_viridis_c() +
+  labs(
+    title = "Regression – Hardest Combination",
+    x     = "R",
+    y     = "G",
+    fill  = "Logit(Y)"
+  ) +
+  theme_minimal()
+
+# Regression – Easiest
+ggplot(grid_reg_easy, aes(x = R, y = G, fill = z)) +
+  geom_raster() +
+  scale_fill_viridis_c() +
+  labs(
+    title = "Regression – Easiest Combination",
+    x     = "R",
+    y     = "G",
+    fill  = "Logit(Y)"
+  ) +
+  theme_minimal()
+
+# Classification – Hardest
+ggplot(grid_class_hard, aes(x = R, y = G, fill = z)) +
+  geom_raster() +
+  scale_fill_viridis_c() +
+  labs(
+    title = "Classification – Hardest Combination",
+    x     = "R",
+    y     = "G",
+    fill  = "Event Probability"
+  ) +
+  theme_minimal()
+
+# Classification – Easiest
+ggplot(grid_class_easy, aes(x = R, y = G, fill = z)) +
+  geom_raster() +
+  scale_fill_viridis_c() +
+  labs(
+    title = "Classification – Easiest Combination",
+    x     = "R",
+    y     = "G",
+    fill  = "Event Probability"
+  ) +
+  theme_minimal()
+
+```
+
+
+*What conclusions can you draw from your surface plots?*
+*In the regression task, both the hardest and easiest combinations exhibit a generally positive relationship between Red (R), Green (G), and the logit-transformed response. However, the dynamic range in the easiest combination is notably broader, with values spanning from below -4 to above 1. This suggests that the model is more sensitive and confident in its predictions for the easiest combination, while the hardest combination shows a flattened response surface, indicating weaker signal and less variation in the predicted logit(Y).*
+*In the classification task, the easiest combination shows a well-defined and gradual transition between low and high event probabilities, forming a clean decision boundary. In contrast, the hardest classification combination displays a sharper and more abrupt boundary, with high event probabilities collapsing quickly to zero. This sharp transition indicates model instability and lower confidence in predictions in that region, likely due to limited data or overlapping features.*
+
+*Are the trends different between the hardest and easiest combinations?*
+*Yes, the trends differ in both regression and classification tasks.*
+*In regression, the direction of the trend (higher R/G leading to higher logit(Y)) is similar across both combinations. However, the amplitude and curvature differ: the easiest combination yields a much wider prediction scale and steeper gradients, while the hardest combination is smoother and compressed, reflecting lower predictive confidence and signal strength.*
+*In classification, the difference is even more pronounced. The easiest combination forms a smooth gradient of increasing probability, while the hardest combination forms a narrow decision band, almost binary in nature, where minor shifts in R and G cause dramatic changes in predicted probability. This points to greater model uncertainty and poorer generalization in that region.*
+
+```{r}
+saveRDS(lm7,  "best_regression_model.rds")
+saveRDS(glm7, "best_classification_model.rds")
+```

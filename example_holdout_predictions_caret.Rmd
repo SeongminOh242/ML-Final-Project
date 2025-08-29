@@ -1,0 +1,60 @@
+---
+title: "PPG Paint Colors: Final Project"
+subtitle: "Regression and Classification Performance Analysis with Hold-Out Prediction"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(dplyr)
+library(tibble)
+```
+
+Load Data
+```{r, read_data_01}
+df <- readr::read_csv("paint_project_train_data.csv", col_names = TRUE)
+```
+
+Load Hold-Out Data and Models
+```{r}
+# replace these paths with wherever you saved your models
+reg_model <- readRDS("best_regression_model.rds")
+cls_model <- readRDS("best_classification_model.rds")
+
+holdout <- readr::read_csv("paint_project_holdout_data.csv")
+
+```
+Predict on Hold-Out Set
+```{r}
+# 1) regression → logit(response)
+y_hat <- predict(reg_model, holdout, type = "response")
+
+# 2) classification probability of event
+prob_event <- predict(cls_model, holdout, type = "response")
+outcome_hat <- ifelse(prob_event > 0.5, "event", "non_event")
+
+```
+
+Compile & Export Submission
+```{r}
+submission <- tibble(
+  y           = y_hat,
+  outcome     = outcome_hat,
+  probability = prob_event
+) %>%
+  rowid_to_column(var = "id")
+
+# 6) Write CSV
+readr::write_csv(submission, "holdout_predictions.csv")
+```
+
+
+
+Interpretation
+The final models for the PPG Paint Colors project demonstrated excellent performance based on cross-validation metrics, suggesting strong predictive power and generalization capability. The regression model achieved a remarkably low Root Mean Squared Error (RMSE) of 0.0589 and a high R² value of 0.9976, indicating an almost perfect fit to the training data. This suggests that the model captures the relationship between input features and the response variable with minimal error and very high precision. The Mean Absolute Error (MAE) of 0.0418 further confirms that, on average, the model’s predictions deviate only slightly from the actual values. For classification, the model attained an overall accuracy of 82.8%, meaning it correctly classified the outcome in over four out of five cases. Notably, the model showed a strong specificity of 87.4%, implying a high ability to correctly identify "non-event" cases. However, sensitivity was relatively lower at 64.1%, indicating that the model is moderately effective at identifying "event" cases and may underpredict the positive class. Despite this trade-off, the ROC AUC of 0.8468 suggests robust overall discriminatory power between classes. Together, these results imply that the models are well-tuned, avoid overfitting, and perform reliably on both continuous and binary tasks, although there may still be room for improvement in capturing minority class instances.
+
+
